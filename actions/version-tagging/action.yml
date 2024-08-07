@@ -1,0 +1,72 @@
+name: 'Version Tagging Action'
+description: 'A GitHub Action to create version tags and release notes'
+inputs:
+  github-token:
+    description: 'GitHub Token'
+    required: true
+  ref:
+    description: 'GitHub Head Ref'
+    required: true
+outputs:
+  version:
+    description: 'The created version tag'
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ inputs.ref }}
+        fetch-depth: 0
+
+    - name: Determine if rerun
+      id: check_rerun
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_run" ]; then
+          echo "This is a rerun"
+          echo "::set-output name=rerun::true"
+        else
+          echo "This is a fresh run"
+          echo "::set-output name=rerun::false"
+        fi
+
+    - name: Create Version Tagging
+      if: steps.check_rerun.outputs.rerun == 'false'
+      id: version
+      uses: codacy/git-version@2.7.0
+      with:
+        prefix: "v"
+        major-identifier: "break:"
+        minor-identifier: "feat:"
+
+    - name: Get Previous Tag
+      if: steps.check_rerun.outputs.rerun == 'false'
+      id: previous-tag
+      run: |
+        git fetch --tags
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0)
+        echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> $GITHUB_ENV
+
+    - name: Push Tagging
+      if: steps.check_rerun.outputs.rerun == 'false'
+      uses: actions/github-script@v5
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          github.rest.git.createRef({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            ref: 'refs/tags/${{ steps.version.outputs.version }}',
+            sha: context.sha
+          })
+
+    - name: Create release notes
+      if: steps.check_rerun.outputs.rerun == 'false'
+      uses: actions/github-script@v5
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          await github.request('POST /repos/${{github.repository}}/releases', {
+            tag_name: '${{ steps.version.outputs.version }}',
+            generate_release_notes: true
+          })
