@@ -9,7 +9,8 @@ inputs:
     required: true
 outputs:
   version:
-    description: 'The created version tag'
+    description: 'The value of the new pre-calculated tag'
+    value: ${{ steps.version.outputs.version }}
 runs:
   using: 'composite'
   steps:
