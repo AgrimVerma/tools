@@ -40,18 +40,18 @@ runs:
         ref: ${{ inputs.ref }}
         fetch-depth: 0
         
-    - name: Get PR description
-      uses: actions/github-script@v6
-      id: get_pr_data
-      with:
-        script: |
-          return (
-            await github.rest.repos.listPullRequestsAssociatedWithCommit({
-              commit_sha: context.sha,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-            })
-          ).data[0];
+    # - name: Get PR description
+    #   uses: actions/github-script@v6
+    #   id: get_pr_data
+    #   with:
+    #     script: |
+    #       return (
+    #         await github.rest.repos.listPullRequestsAssociatedWithCommit({
+    #           commit_sha: context.sha,
+    #           owner: context.repo.owner,
+    #           repo: context.repo.repo,
+    #         })
+    #       ).data[0];
 
     # - name: Extract JIRA Issue Key from PR Description
     #   id: extract-jira-key
@@ -109,13 +109,13 @@ runs:
       env:
         RELEASE_NOTES: ${{ fromJson(steps.get-release.outputs.result).body }}
         RELEASE_URL: ${{ fromJson(steps.get-release.outputs.result).url }}
-        PR_DESCRIPTION: ${{ fromJson(steps.get_pr_data.outputs.result).body }}
+        # PR_DESCRIPTION: ${{ fromJson(steps.get_pr_data.outputs.result).body }}
         COMMIT_DETAILS: ${{ inputs.commit-details }}
         # JIRA_SUMMARY: ${{ env.jira_summary }}
         # JIRA_DESCRIPTION: ${{ env.jira_description }}
       run: |
         COMMIT_DETAILS=$(echo "${COMMIT_DETAILS}" | sed 's/\\:/:/g')
-        RELEASE_NOTES="✅ New *${{ github.event.repository.name }}* Release [${{ inputs.version }}](${RELEASE_URL}) $(date)\n${RELEASE_NOTES}\nCommit Details:\n${COMMIT_DETAILS}\nPR Description:\n${PR_DESCRIPTION}"
+        RELEASE_NOTES="✅ New *${{ github.event.repository.name }}* Release [${{ inputs.version }}](${RELEASE_URL}) $(date)\n${RELEASE_NOTES}\nCommit Details:\n${COMMIT_DETAILS}"
         RELEASE_NOTES=$(echo -e "${RELEASE_NOTES}" | sed 's/## //g' | sed -r 's/<[^>]*>//g' | sed -r 's/\[([^]]+)\]\(([^)]+)\)/[\1|\2]/g' | sed -r 's/@([^ ]+)/[@\1|https:\/\/github.com\/\1]/g' | sed 's/\\n/<br\/>/g')
 
         payload=$(jq -n \
