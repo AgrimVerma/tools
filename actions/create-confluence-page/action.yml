@@ -1,0 +1,138 @@
+name: 'Create Confluence Page Action'
+description: 'A GitHub Action to create and update Confluence pages'
+inputs:
+  github-token:
+    description: 'GitHub Token'
+    required: true
+  ref:
+    description: 'GitHub Head Ref'
+    required: true
+  confluence-email:
+    description: 'Confluence User Email'
+    required: true
+  confluence-api-token:
+    description: 'Confluence API Token'
+    required: true
+  confluence-url:
+    description: 'Confluence Base URL'
+    required: true
+  confluence-space-id:
+    description: 'Confluence Space ID'
+    required: true
+  confluence-parent-id:
+    description: 'Confluence Parent Page ID'
+    required: true
+outputs:
+  page-id:
+    description: 'The created or updated Confluence page ID'
+runs:
+  using: 'composite'
+  steps:
+    - name: Get PR description
+      uses: actions/github-script@v6
+      id: get_pr_data
+      with:
+        script: |
+          return (
+            await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              commit_sha: context.sha,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            })
+          ).data[0];
+
+    - name: Extract JIRA Issue Key from PR Description
+      id: extract-jira-key
+      run: |
+        jira_issue_key=$(echo "${{ fromJson(steps.get_pr_data.outputs.result).body }}" | grep -oE '[A-Z]+-[0-9]+' | head -n 1)
+        if [ -z "$jira_issue_key" ]; then
+          echo "No JIRA issue key found in the PR description."
+          exit 1
+        fi
+        sanitized_jira_issue_key=$(echo "$jira_issue_key" | sed 's/[^a-zA-Z0-9_-]//g')
+        echo "jira_issue_key=$sanitized_jira_issue_key" >> $GITHUB_ENV
+      shell: bash
+
+    - name: Fetch JIRA Issue Details
+      id: fetch-jira-details
+      run: |
+        response=$(curl -u ${{ inputs.confluence-email }}:${{ inputs.confluence-api-token }} \
+          -X GET -H "Content-Type: application/json" \
+          "${{ inputs.confluence-url }}/rest/api/2/issue/${{ env.jira_issue_key }}")
+        
+        jira_summary=$(echo $response | jq -r '.fields.summary')
+        jira_description=$(echo $response | jq -r '.fields.description')
+        if [ -z "$jira_summary" ]; then
+          echo "Failed to fetch JIRA issue details."
+          exit 1
+        fi
+        echo "jira_summary=$jira_summary" >> $GITHUB_ENV
+        echo "jira_description=$jira_description" >> $GITHUB_ENV
+      shell: bash
+
+    - name: Get Release
+      id: get-release
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const tag = '${{ needs.version-tag.outputs.version }}';
+          const release = await github.rest.repos.getReleaseByTag({
+            owner: '${{ github.repository_owner }}',
+            repo: '${{ github.event.repository.name }}',
+            tag: tag
+          });
+          if (!release || !release.data.body) {
+              console.error('Invalid release');
+              return;
+          }
+          console.log(release.data.body);
+          return {
+              body: release.data.body,
+              url: `https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases/tag/${tag}`
+          };
+
+    - name: Post Release Notes to Confluence
+      id: post_to_confluence
+      shell: bash
+      env:
+        RELEASE_NOTES: ${{ fromJson(steps.get-release.outputs.result).body }}
+        RELEASE_URL: ${{ fromJson(steps.get-release.outputs.result).url }}
+        PR_DESCRIPTION: ${{ fromJson(steps.get_pr_data.outputs.result).body }}
+        COMMIT_DETAILS: ${{ needs.version-tag.outputs.commit_details }}
+        JIRA_SUMMARY: ${{ env.jira_summary }}
+        JIRA_DESCRIPTION: ${{ env.jira_description }}
+      run: |
+        COMMIT_DETAILS=$(echo "${COMMIT_DETAILS}" | sed 's/\\:/:/g')
+        RELEASE_NOTES="✅ New *${{ github.event.repository.name }}* Release [${{ needs.version-tag.outputs.version }}](${RELEASE_URL}) $(date)\n${RELEASE_NOTES}\nCommit Details:\n${COMMIT_DETAILS}\nPR Description:\n${PR_DESCRIPTION}\nTicket Details:\n${JIRA_SUMMARY}\n${JIRA_DESCRIPTION}"
+        RELEASE_NOTES=$(echo -e "${RELEASE_NOTES}" | sed 's/## //g' | sed -r 's/<[^>]*>//g' | sed -r 's/\[([^]]+)\]\(([^)]+)\)/[\1|\2]/g' | sed -r 's/@([^ ]+)/[@\1|https:\/\/github.com\/\1]/g' | sed 's/\\n/<br\/>/g')
+
+        payload=$(jq -n \
+        --arg spaceId "${{ inputs.confluence-space-id }}" \
+        --arg status "current" \
+        --arg title "Release: ${{ needs.version-tag.outputs.version }}" \
+        --arg parentId "${{ inputs.confluence-parent-id }}" \
+        --arg value "$RELEASE_NOTES" \
+        '{
+            "spaceId": $spaceId,
+            "status": $status,
+            "title": $title,
+            "parentId": $parentId,
+            "body": {
+              "representation": "wiki",
+              "value": $value
+            }
+        }')
+
+        response=$(curl --request POST \
+            --url '${{ inputs.confluence-url }}/wiki/api/v2/pages' \
+            --user '${{ inputs.confluence-email }}:${{ inputs.confluence-api-token }}' \
+            --header 'Accept: application/json' \
+            --header 'Content-Type: application/json' \
+            --data "$payload")
+        echo "Response: $response"
+        pageId=$(echo "$response" | jq -r '.id')
+        if [ "$pageId" == "null" ]; then
+          echo "Failed to create page"
+          exit 1
+        fi
+        echo "pageId=$pageId" >> $GITHUB_ENV
