@@ -121,7 +121,7 @@ runs:
         payload=$(jq -n \
         --arg spaceId "${{ inputs.confluence-space-id }}" \
         --arg status "current" \
-        --arg title "Release: ${{ needs.version-tag.outputs.version }}" \
+        --arg title "Release: ${{ inputs.version }}" \
         --arg parentId "${{ inputs.confluence-parent-id }}" \
         --arg value "$RELEASE_NOTES" \
         '{
