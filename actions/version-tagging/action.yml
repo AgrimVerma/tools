@@ -29,6 +29,7 @@ runs:
           echo "This is a fresh run"
           echo "::set-output name=rerun::false"
         fi
+      shell: bash
 
     - name: Create Version Tagging
       if: steps.check_rerun.outputs.rerun == 'false'
@@ -46,6 +47,7 @@ runs:
         git fetch --tags
         PREVIOUS_TAG=$(git describe --tags --abbrev=0)
         echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> $GITHUB_ENV
+      shell: bash
 
     - name: Push Tagging
       if: steps.check_rerun.outputs.rerun == 'false'
